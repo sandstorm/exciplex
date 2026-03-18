@@ -21,6 +21,7 @@ func httpGet(t *testing.T, path string) string {
 		t.Fatalf("HTTP request to %s failed: %v", path, err)
 	}
 	defer resp.Body.Close()
+
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		t.Fatalf("reading response body failed: %v", err)
@@ -71,4 +72,26 @@ func TestIntervalIsCalledRepeatedly(t *testing.T) {
 	assertContains(t, body, "interval 1")
 	assertContains(t, body, "interval 2")
 	assertContains(t, body, " 9, ")
+}
+
+func TestStopTimeoutBeforeFired(t *testing.T) {
+	body := httpGet(t, "stop_timeout_before_fired.php")
+	assertNotContains(t, body, "SHOULD NOT APPEAR")
+	assertContains(t, body, " 9, ")
+	assertEndsWith(t, body, "done")
+}
+
+func TestStopIntervalBeforeFired(t *testing.T) {
+	body := httpGet(t, "stop_interval_before_fired.php")
+	assertNotContains(t, body, "SHOULD NOT APPEAR")
+	assertContains(t, body, " 9, ")
+	assertEndsWith(t, body, "done")
+}
+
+func TestStopIntervalAfterOneCall(t *testing.T) {
+	body := httpGet(t, "stop_interval_after_one_call.php")
+	assertContains(t, body, "interval 0")
+	assertNotContains(t, body, "interval 1")
+	assertContains(t, body, " 9, ")
+	assertEndsWith(t, body, "done")
 }

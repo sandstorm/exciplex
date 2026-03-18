@@ -6,7 +6,6 @@ import "C"
 import (
 	"runtime/cgo"
 	"time"
-	"unsafe"
 )
 
 //export go_exciplex_on_processed
@@ -16,38 +15,53 @@ func go_exciplex_on_processed(handle C.uintptr_t) {
 	fn()
 }
 
-// export_php:function exciplex_set_timeout(callable $callable, float $interval): void
-func SetTimeout(callback *C.zval, interval float64) {
-	state := C.exciplex_setup_timeout(callback)
-	if state == nil {
-		return
-	}
-	go func() {
-		<-time.After(time.Duration(interval * float64(time.Second)))
-		C.exciplex_trigger_timeout(state)
-	}()
+// export_php:class ExciplexTimer
+type Timer struct {
+	stopChan chan interface{}
+	state    *C.exciplex_timeout_state
 }
 
-// export_php:function exciplex_set_interval(callable $callable, float $initialDelay, float $interval): void
-func SetInterval(callback *C.zval, initialDelay, interval float64) {
-	//ch := make(chan struct{}, 1)
-	//h := cgo.NewHandle(func() { ch <- struct{}{} })
-
-	state := C.exciplex_setup_repeating_timeout(callback, 0) //C.uintptr_t(h))
+func startTimer(callback *C.zval, interval, delay float64, repeated bool) *Timer {
+	state := C.exciplex_setup_timeout(callback, C.bool(repeated), 0)
 	if state == nil {
-		//h.Delete()
-		return
+		return nil
 	}
+
+	timeout := &Timer{
+		stopChan: make(chan interface{}, 1),
+		state:    state,
+	}
+
 	go func() {
-		//defer h.Delete()
-		time.Sleep(time.Duration(initialDelay * float64(time.Second)))
-		for {
-			if C.exciplex_trigger_timeout(state) < 0 {
-				C.free(unsafe.Pointer(state))
-				return
+		repeat := repeated
+		for ok, waitTime := true, delay; ok; ok, waitTime = repeat, interval {
+			select {
+			case <-timeout.stopChan:
+				repeat = false
+			case <-time.After(time.Duration(waitTime * float64(time.Second))):
+				repeat = C.exciplex_trigger_timeout(state) == 0
 			}
-			//<-ch // block until handler processes this tick
-			time.Sleep(time.Duration(interval * float64(time.Second)))
 		}
 	}()
+
+	return timeout
+}
+
+// export_php:function exciplex_set_timeout(callable $callable, float $interval): ExciplexTimer
+func SetTimeout(callback *C.zval, interval float64) *Timer {
+	return startTimer(callback, interval, interval, false)
+}
+
+// export_php:function exciplex_set_interval(callable $callable, float $initialDelay, float $interval): ExciplexTimer
+func SetInterval(callback *C.zval, initialDelay, interval float64) *Timer {
+	return startTimer(callback, interval, initialDelay, true)
+}
+
+// export_php:method ExciplexTimer::stop(): void
+func (t *Timer) Stop() {
+	// Cancel on PHP thread: sets CANCELLED, removes from pending list, cleans callback
+	C.exciplex_cancel_timeout(t.state)
+	t.state = nil
+	// Signal goroutine to exit and free state
+	t.stopChan <- struct{}{}
 }

@@ -22,8 +22,11 @@ typedef struct _exciplex_timeout_state {
 } exciplex_timeout_state;
 
 // Called from PHP thread — one-shot or repeating setup
-exciplex_timeout_state *exciplex_setup_timeout(zval *callback);
-exciplex_timeout_state *exciplex_setup_repeating_timeout(zval *callback, uintptr_t on_processed_handle);
+exciplex_timeout_state *exciplex_setup_timeout(zval *callback, bool repeated, uintptr_t on_processed_handle);
+
+// Called from PHP thread to cancel a timeout (e.g. $timer->stop()).
+// Removes from pending list and cleans up callback. Caller frees state.
+void exciplex_cancel_timeout(exciplex_timeout_state *state);
 
 // Called from Go goroutine after timer fires.
 // Returns 0 on success, -1 if cancelled (request ended).

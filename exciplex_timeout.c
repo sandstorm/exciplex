@@ -45,12 +45,14 @@ static void exciplex_interrupt_handler(zend_execute_data *execute_data) {
                 go_exciplex_on_processed(state->on_processed_handle);
             }
         } else {
-            // One-shot: remove from pending, copy callback, free state, then call.
-            exciplex_list_remove(&pending, state);
+            // One-shot: set CANCELLED so goroutine exits on next trigger attempt.
+            // Don't free state — goroutine will free via defer.
+            // Don't remove from pending — RSHUTDOWN will clean up.
+            atomic_store(&state->status, EXCIPLEX_TIMEOUT_CANCELLED);
 
             zval callback;
             ZVAL_COPY_VALUE(&callback, &state->callback);
-            free(state);
+            ZVAL_UNDEF(&state->callback); // prevent RSHUTDOWN double-dtor
 
             zval retval;
             ZVAL_UNDEF(&retval);
@@ -67,7 +69,7 @@ static void exciplex_interrupt_handler(zend_execute_data *execute_data) {
     }
 }
 
-static exciplex_timeout_state *setup_timeout_internal(zval *callback, bool repeating, uintptr_t on_processed_handle) {
+exciplex_timeout_state *exciplex_setup_timeout(zval *callback, bool repeating, uintptr_t on_processed_handle) {
     exciplex_timeout_state *state = malloc(sizeof(exciplex_timeout_state));
     if (state == NULL) {
         return NULL;
@@ -85,12 +87,12 @@ static exciplex_timeout_state *setup_timeout_internal(zval *callback, bool repea
     return state;
 }
 
-exciplex_timeout_state *exciplex_setup_timeout(zval *callback) {
-    return setup_timeout_internal(callback, false, 0);
-}
-
-exciplex_timeout_state *exciplex_setup_repeating_timeout(zval *callback, uintptr_t on_processed_handle) {
-    return setup_timeout_internal(callback, true, on_processed_handle);
+// Called from PHP thread to cancel a timeout (e.g. $timer->stop()).
+// State stays in pending list — RSHUTDOWN will free it.
+void exciplex_cancel_timeout(exciplex_timeout_state *state) {
+    atomic_store(&state->status, EXCIPLEX_TIMEOUT_CANCELLED);
+    zval_ptr_dtor(&state->callback);
+    ZVAL_UNDEF(&state->callback);
 }
 
 // Called from a Go goroutine (arbitrary OS thread) after the timer fires.
@@ -107,10 +109,7 @@ int exciplex_trigger_timeout(exciplex_timeout_state *state) {
     if (!atomic_compare_exchange_strong(&state->status, &expected, EXCIPLEX_TIMEOUT_TRIGGERED)) {
         expected = EXCIPLEX_TIMEOUT_TRIGGERED;
         if (!atomic_compare_exchange_strong(&state->status, &expected, EXCIPLEX_TIMEOUT_TRIGGERED)) {
-            // Status is CANCELLED
-            if (!state->repeating) {
-                free(state);
-            }
+            // Status is CANCELLED — RSHUTDOWN will free state.
             return -1;
         }
     }
@@ -129,40 +128,37 @@ void exciplex_timeout_minit(void) {
 
 // Called during request shutdown (on the PHP thread).
 void exciplex_timeout_rshutdown(void) {
-    // Drain and free any unprocessed triggered nodes
+    // First: cancel all states so goroutines stop pushing new triggers.
+    exciplex_list_node *node = exciplex_list_drain(&pending);
+    exciplex_list_node *first = node;
+    while (node != NULL) {
+        exciplex_timeout_state *state = (exciplex_timeout_state *)node->data;
+
+        // Set CANCELLED — goroutines will see this and stop.
+        atomic_store(&state->status, EXCIPLEX_TIMEOUT_CANCELLED);
+
+        // Clean callback if not already cleaned (cancel/one-shot handler set UNDEF).
+        zval_ptr_dtor(&state->callback);
+
+        node = node->next;
+    }
+
+    // Second: drain any triggered nodes pushed before/during cancellation.
     exciplex_list_node *tnode = exciplex_mpsc_stack_pop_all(&triggered);
     while (tnode != NULL) {
         exciplex_list_node *tnext = tnode->next;
-        // Don't touch state here — handled below via pending list
         free(tnode);
         tnode = tnext;
     }
 
-    // Cancel all pending timeouts
-    exciplex_list_node *node = exciplex_list_drain(&pending);
+    // Third: free all states and list nodes. At this point all goroutines
+    // have seen CANCELLED (or will see it and just return -1 without
+    // accessing state further since the MPSC stack was drained).
+    node = first;
     while (node != NULL) {
         exciplex_list_node *next = node->next;
-        exciplex_timeout_state *state = (exciplex_timeout_state *)node->data;
-        free(node);
-
-        int expected = EXCIPLEX_TIMEOUT_PENDING;
-        if (atomic_compare_exchange_strong(&state->status, &expected, EXCIPLEX_TIMEOUT_CANCELLED)) {
-            // We won: goroutine hasn't fired yet.
-            // Clean up callback. Don't free state — goroutine will.
-            zval_ptr_dtor(&state->callback);
-        } else {
-            // Goroutine won (TRIGGERED) but interrupt handler didn't run.
-            zval_ptr_dtor(&state->callback);
-            if (state->repeating) {
-                // Goroutine is still alive — force cancel so it sees -1 next iteration.
-                atomic_store(&state->status, EXCIPLEX_TIMEOUT_CANCELLED);
-                // Don't free — goroutine will free in Go.
-            } else {
-                // One-shot goroutine is done, won't touch state again.
-                free(state);
-            }
-        }
-
+        free(node->data); // free state
+        free(node);       // free list node
         node = next;
     }
 }
