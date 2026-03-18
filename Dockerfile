@@ -57,10 +57,8 @@ ARG TARGETARCH
 RUN curl -SL "https://caretakerd.echocat.org/latest/download/caretakerd-linux-${TARGETARCH}.tar.gz" \
     | tar -xz --exclude caretakerd.html -C /usr/bin
 
-ADD ./test /app/Web
-
 # performance profiling
-RUN mkdir -p /app/tracing/_traces/ \
+RUN mkdir -p /app/Web /app/tracing/_traces/ \
     && chown -R ${USER}:${USER} /app/tracing
 
 # cleanup & chown -> for DEV, the full /app dir is writable
