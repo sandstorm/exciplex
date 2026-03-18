@@ -1,0 +1,36 @@
+#ifndef _EXCIPLEX_TIMEOUT_H
+#define _EXCIPLEX_TIMEOUT_H
+
+#include <php.h>
+#include <stdatomic.h>
+#include <stdint.h>
+
+#include "exciplex_list.h"
+
+// Status values for the timeout state machine
+#define EXCIPLEX_TIMEOUT_PENDING   0
+#define EXCIPLEX_TIMEOUT_TRIGGERED 1
+#define EXCIPLEX_TIMEOUT_CANCELLED 2
+
+typedef struct _exciplex_timeout_state {
+    zval callback;
+    zend_atomic_bool *vm_interrupt;
+    exciplex_mpsc_stack *triggered_stack;
+    atomic_int status;
+    bool repeating;
+    uintptr_t on_processed_handle;
+} exciplex_timeout_state;
+
+// Called from PHP thread — one-shot or repeating setup
+exciplex_timeout_state *exciplex_setup_timeout(zval *callback);
+exciplex_timeout_state *exciplex_setup_repeating_timeout(zval *callback, uintptr_t on_processed_handle);
+
+// Called from Go goroutine after timer fires.
+// Returns 0 on success, -1 if cancelled (request ended).
+int exciplex_trigger_timeout(exciplex_timeout_state *state);
+
+// Lifecycle hooks
+void exciplex_timeout_minit(void);
+void exciplex_timeout_rshutdown(void);
+
+#endif

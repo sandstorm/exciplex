@@ -2,9 +2,19 @@
 
 exciplex_set_timeout(
     function () {
-        die("The allowed time has been exceeded");
+        die ("The allowed time has been exceeded");
     },
     0.1
+);
+
+$num = 0;
+exciplex_set_interval(
+    function () use (&$num) {
+        echo ("interrupt $num -- ");
+        $num = $num+1;
+    },
+    0.03,
+    0.005
 );
 
 
