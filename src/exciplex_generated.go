@@ -57,3 +57,32 @@ func go_exciplex_timer_stop(handle C.uintptr_t) {
 	timer := obj.(*Timer)
 	timer.Stop()
 }
+
+//export go_exciplex_start_profiler
+func go_exciplex_start_profiler(initialDelay float64, interval float64) C.uintptr_t {
+	profiler := StartProfiler(initialDelay, interval)
+	if profiler == nil {
+		return 0
+	}
+	return registerGoObject(profiler)
+}
+
+//export go_exciplex_profiler_stop
+func go_exciplex_profiler_stop(handle C.uintptr_t) {
+	obj := getGoObject(handle)
+	if obj == nil {
+		return
+	}
+	profiler := obj.(*Profiler)
+	profiler.Stop()
+}
+
+//export go_exciplex_profiler_get_log
+func go_exciplex_profiler_get_log(handle C.uintptr_t) unsafe.Pointer {
+	obj := getGoObject(handle)
+	if obj == nil {
+		return nil
+	}
+	profiler := obj.(*Profiler)
+	return frankenphp.PHPString(profiler.GetLog(), false)
+}

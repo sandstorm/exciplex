@@ -1,7 +1,10 @@
 #include <php.h>
 #include <Zend/zend_execute.h>
+#include <Zend/zend_builtin_functions.h>
 #include <stdatomic.h>
 #include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
 
 #include "exciplex_timeout.h"
 
@@ -35,10 +38,12 @@ static void exciplex_interrupt_handler(zend_execute_data *execute_data) {
             // If callback calls die(), RSHUTDOWN will cancel the still-PENDING state.
             atomic_store(&state->status, EXCIPLEX_TIMEOUT_PENDING);
 
-            zval retval;
-            ZVAL_UNDEF(&retval);
-            call_user_function(NULL, NULL, &state->callback, &retval, 0, NULL);
-            zval_ptr_dtor(&retval);
+            if (Z_TYPE(state->callback) != IS_UNDEF) {
+                zval retval;
+                ZVAL_UNDEF(&retval);
+                call_user_function(NULL, NULL, &state->callback, &retval, 0, NULL);
+                zval_ptr_dtor(&retval);
+            }
 
             // Notify the Go goroutine that this tick was processed
             if (state->on_processed_handle != 0) {
@@ -75,7 +80,11 @@ exciplex_timeout_state *exciplex_setup_timeout(zval *callback, bool repeating, u
         return NULL;
     }
 
-    ZVAL_COPY(&state->callback, callback);
+    if (callback != NULL) {
+        ZVAL_COPY(&state->callback, callback);
+    } else {
+        ZVAL_UNDEF(&state->callback);
+    }
     state->vm_interrupt = &EG(vm_interrupt);
     state->triggered_stack = &triggered;
     atomic_store(&state->status, EXCIPLEX_TIMEOUT_PENDING);
@@ -91,8 +100,10 @@ exciplex_timeout_state *exciplex_setup_timeout(zval *callback, bool repeating, u
 // State stays in pending list — RSHUTDOWN will free it.
 void exciplex_cancel_timeout(exciplex_timeout_state *state) {
     atomic_store(&state->status, EXCIPLEX_TIMEOUT_CANCELLED);
-    zval_ptr_dtor(&state->callback);
-    ZVAL_UNDEF(&state->callback);
+    if (Z_TYPE(state->callback) != IS_UNDEF) {
+        zval_ptr_dtor(&state->callback);
+        ZVAL_UNDEF(&state->callback);
+    }
 }
 
 // Called from a Go goroutine (arbitrary OS thread) after the timer fires.
@@ -119,6 +130,60 @@ int exciplex_trigger_timeout(exciplex_timeout_state *state) {
     exciplex_mpsc_stack_push(state->triggered_stack, state);
     zend_atomic_bool_store(vm_interrupt, true);
     return 0;
+}
+
+char *exciplex_capture_stack_trace(void) {
+    zval backtrace;
+    zend_fetch_debug_backtrace(&backtrace, 0, DEBUG_BACKTRACE_IGNORE_ARGS, 0);
+
+    // Build newline-separated string of "function at file:line"
+    size_t buf_size = 1024;
+    size_t buf_used = 0;
+    char *buf = malloc(buf_size);
+    buf[0] = '\0';
+
+    if (Z_TYPE(backtrace) == IS_ARRAY) {
+        zval *frame;
+        ZEND_HASH_FOREACH_VAL(Z_ARRVAL(backtrace), frame) {
+            if (Z_TYPE_P(frame) != IS_ARRAY) continue;
+
+            //zval *zfile = zend_hash_str_find(Z_ARRVAL_P(frame), "file", sizeof("file") - 1);
+            zval *zfunc = zend_hash_str_find(Z_ARRVAL_P(frame), "function", sizeof("function") - 1);
+            zval *zclass = zend_hash_str_find(Z_ARRVAL_P(frame), "class", sizeof("class") - 1);
+
+            //const char *file = (zfile && Z_TYPE_P(zfile) == IS_STRING) ? Z_STRVAL_P(zfile) : "unknown";
+            const char *func = (zfunc && Z_TYPE_P(zfunc) == IS_STRING) ? Z_STRVAL_P(zfunc) : "unknown";
+            const char *cls = (zclass && Z_TYPE_P(zclass) == IS_STRING) ? Z_STRVAL_P(zclass) : NULL;
+
+            // Format: "Class::method" or "function"
+            char line_buf[2048];
+            int len;
+            if (cls) {
+                //len = snprintf(line_buf, sizeof(line_buf), "%s;%s::%s", file, cls, func);
+                len = snprintf(line_buf, sizeof(line_buf), "%s::%s", cls, func);
+            } else {
+                //len = snprintf(line_buf, sizeof(line_buf), "%s;%s", file, func);
+                len = snprintf(line_buf, sizeof(line_buf), "%s", func);
+            }
+
+            // Need: existing content + separator + new line + null
+            size_t needed = buf_used + (buf_used > 0 ? 1 : 0) + len + 1;
+            if (needed > buf_size) {
+                buf_size = needed * 2;
+                buf = realloc(buf, buf_size);
+            }
+
+            if (buf_used > 0) {
+                buf[buf_used++] = '\n';
+            }
+            memcpy(buf + buf_used, line_buf, len);
+            buf_used += len;
+            buf[buf_used] = '\0';
+        } ZEND_HASH_FOREACH_END();
+    }
+
+    zval_ptr_dtor(&backtrace);
+    return buf;
 }
 
 void exciplex_timeout_minit(void) {

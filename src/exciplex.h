@@ -6,5 +6,6 @@
 
 extern zend_module_entry exciplex_module_entry;
 extern zend_class_entry *exciplex_timer_ce;
+extern zend_class_entry *exciplex_profiler_ce;
 
 #endif

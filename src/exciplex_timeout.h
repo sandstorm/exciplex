@@ -32,6 +32,10 @@ void exciplex_cancel_timeout(exciplex_timeout_state *state);
 // Returns 0 on success, -1 if cancelled (request ended).
 int exciplex_trigger_timeout(exciplex_timeout_state *state);
 
+// Capture the current PHP stack trace as a malloc'd newline-separated string.
+// Caller must free() the result.
+char *exciplex_capture_stack_trace(void);
+
 // Lifecycle hooks
 void exciplex_timeout_minit(void);
 void exciplex_timeout_rshutdown(void);

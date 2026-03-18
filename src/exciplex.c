@@ -9,9 +9,10 @@
 #include "exciplex_arginfo.h"
 #include "_cgo_export.h"
 
-// --- ExciplexTimer PHP object infrastructure ---
+// --- PHP object infrastructure (shared by ExciplexTimer and ExciplexProfiler) ---
 
 zend_class_entry *exciplex_timer_ce = NULL;
+zend_class_entry *exciplex_profiler_ce = NULL;
 static zend_object_handlers exciplex_object_handlers;
 
 typedef struct {
@@ -54,6 +55,10 @@ PHP_MINIT_FUNCTION(exciplex) {
     // Register ExciplexTimer class
     exciplex_timer_ce = register_class_ExciplexTimer();
     exciplex_timer_ce->create_object = exciplex_create_object;
+
+    // Register ExciplexProfiler class
+    exciplex_profiler_ce = register_class_ExciplexProfiler();
+    exciplex_profiler_ce->create_object = exciplex_create_object;
 
     return SUCCESS;
 }
@@ -128,4 +133,55 @@ PHP_METHOD(ExciplexTimer, stop)
         RETURN_THROWS();
     }
     go_exciplex_timer_stop(intern->go_handle);
+}
+
+// --- PHP profiler functions ---
+
+PHP_FUNCTION(start_profiler)
+{
+    double initialDelay = 0.0;
+    double interval = 0.0;
+    ZEND_PARSE_PARAMETERS_START(2, 2)
+        Z_PARAM_DOUBLE(initialDelay)
+        Z_PARAM_DOUBLE(interval)
+    ZEND_PARSE_PARAMETERS_END();
+
+    uintptr_t handle = go_exciplex_start_profiler((double) initialDelay, (double) interval);
+    if (handle == 0) {
+        RETURN_NULL();
+    }
+
+    object_init_ex(return_value, exciplex_profiler_ce);
+    exciplex_object *intern = exciplex_object_from_obj(Z_OBJ_P(return_value));
+    intern->go_handle = handle;
+}
+
+// --- ExciplexProfiler methods ---
+
+PHP_METHOD(ExciplexProfiler, stop)
+{
+    ZEND_PARSE_PARAMETERS_NONE();
+
+    exciplex_object *intern = exciplex_object_from_obj(Z_OBJ_P(ZEND_THIS));
+    if (intern->go_handle == 0) {
+        zend_throw_error(NULL, "Profiler not initialized");
+        RETURN_THROWS();
+    }
+    go_exciplex_profiler_stop(intern->go_handle);
+}
+
+PHP_METHOD(ExciplexProfiler, getLog)
+{
+    ZEND_PARSE_PARAMETERS_NONE();
+
+    exciplex_object *intern = exciplex_object_from_obj(Z_OBJ_P(ZEND_THIS));
+    if (intern->go_handle == 0) {
+        zend_throw_error(NULL, "Profiler not initialized");
+        RETURN_THROWS();
+    }
+    zend_string *zstr = (zend_string *)go_exciplex_profiler_get_log(intern->go_handle);
+    if (zstr == NULL) {
+        RETURN_EMPTY_STRING();
+    }
+    RETURN_STR(zstr);
 }
