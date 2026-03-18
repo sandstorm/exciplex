@@ -4,7 +4,7 @@ go = "1.26"
 [tasks]
 
 [tasks.gen]
-run = 'docker run -e GEN_STUB_SCRIPT=/app/php-src/build/gen_stub.php -v ./:/app/ dunglas/frankenphp:1.12.1-php8.3-trixie frankenphp extension-init exciplex.go'
+run = 'docker run -e GEN_STUB_SCRIPT=/app/php-src/build/gen_stub.php -v ./src:/app/ dunglas/frankenphp:1.12.1-php8.3-trixie frankenphp extension-init exciplex.go'
 
 [tasks.start-test-container]
 run = 'docker compose build && docker compose up -d'
