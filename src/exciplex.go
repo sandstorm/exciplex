@@ -82,14 +82,15 @@ type LogEntry struct {
 
 // export_php:class ExciplexProfiler
 type Profiler struct {
-	timer *Timer
-	logs  map[uint64]*LogEntry
+	timer    *Timer
+	logIndex map[uint64]*LogEntry
+	logOrder []*LogEntry
 }
 
 // export_php:function start_profiler(float $initalDelay, float $interval): ExciplexProfiler
 func StartProfiler(initialDelay float64, interval float64) *Profiler {
 	p := &Profiler{
-		logs: make(map[uint64]*LogEntry),
+		logIndex: make(map[uint64]*LogEntry),
 	}
 	p.timer = startTimer(nil, interval, initialDelay, true, func() {
 		cstr := C.exciplex_capture_stack_trace()
@@ -102,12 +103,14 @@ func StartProfiler(initialDelay float64, interval float64) *Profiler {
 		h.Write([]byte(goStr))
 		key := h.Sum64()
 
-		if entry, ok := p.logs[key]; ok {
+		if entry, ok := p.logIndex[key]; ok {
 			entry.occurrences++
 		} else {
 			frames := strings.Split(goStr, "\n")
 			slices.Reverse(frames)
-			p.logs[key] = &LogEntry{stacktrace: frames, occurrences: 1}
+			entry := &LogEntry{stacktrace: frames, occurrences: 1}
+			p.logIndex[key] = entry
+			p.logOrder = append(p.logOrder, entry)
 		}
 	})
 	return p
@@ -121,7 +124,7 @@ func (p *Profiler) Stop() {
 // export_php:method ExciplexProfiler::getLog(): string
 func (p *Profiler) GetLog() string {
 	var sb strings.Builder
-	for _, entry := range p.logs {
+	for _, entry := range p.logOrder {
 		sb.WriteString(strings.Join(entry.stacktrace, ";"))
 		sb.WriteByte(' ')
 		sb.WriteString(strconv.Itoa(entry.occurrences))

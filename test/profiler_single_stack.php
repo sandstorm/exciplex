@@ -1,19 +1,14 @@
 <?php
 
-function inner() {
-    // Wait in a loop so the profiler samples us inside this function about 10 times
+function test() {
+    // Wait in a loop so the profiler could sample us multiple times (but should only do so once)
     for ($i = 0; $i < 15; $i++) {
         usleep(1000);
     }
 }
 
-function outer() {
-    inner();
-}
-
 $profiler = start_profiler(0.01, 0.5);
-outer();
+test();
 $profiler->stop();
-$log = $profiler->getLog();
-echo $log;
-echo "---END---";
+
+echo $profiler->getLog();

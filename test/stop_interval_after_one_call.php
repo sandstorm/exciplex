@@ -5,10 +5,9 @@ $timer = exciplex_set_interval(
     function () use (&$num, &$timer) {
         echo "interval $num -- ";
         $num += 1;
+
         // Stop after the first callback
-        if ($num === 1) {
-            $timer->stop();
-        }
+        $timer->stop();
     },
     0.02,
     0.01

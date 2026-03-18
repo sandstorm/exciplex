@@ -111,8 +111,7 @@ func TestStopIntervalAfterOneCall(t *testing.T) {
 func TestProfilerNoSamples(t *testing.T) {
 	body := httpGet(t, "profiler_no_samples.php")
 	// getLog() should return empty string when no samples collected
-	assertEndsWith(t, body, "empty")
-	// The body should be exactly "empty" — no log lines before it
+	// => The body should be exactly "empty" — no log lines before it
 	if body != "empty" {
 		t.Errorf("expected body to be exactly %q, got:\n%s", "empty", body)
 	}
@@ -120,37 +119,19 @@ func TestProfilerNoSamples(t *testing.T) {
 
 func TestProfilerSingleStack(t *testing.T) {
 	body := httpGet(t, "profiler_single_stack.php")
-	assertEndsWith(t, body, "---END---")
 
-	// Extract the log portion (before ---END---)
-	log := strings.TrimSuffix(body, "---END---")
-
-	// Should contain the function names from the call stack
-	assertContains(t, log, "inner")
-	assertContains(t, log, "outer")
-
-	// Should have at least one line in flamegraph format
-	lines := filterNonEmpty(strings.Split(log, "\n"))
-	if len(lines) < 1 {
-		t.Fatalf("expected at least 1 log line, got %d", len(lines))
-	}
+	assertMatches(t, body, regexp.MustCompile("test 1\n"))
 }
 
 func TestProfilerMultipleStacks(t *testing.T) {
 	body := httpGet(t, "profiler_multiple_stacks.php")
-	assertEndsWith(t, body, "---END---")
 
-	log := strings.TrimSuffix(body, "---END---")
+	log := strings.TrimSuffix(body, "\n")
+	lines := strings.Split(log, "\n")
 
-	// Should contain both work functions
-	assertContains(t, log, "work_a")
-	assertContains(t, log, "work_b")
-
-	// Should have at least 2 distinct stack lines
-	lines := filterNonEmpty(strings.Split(log, "\n"))
-	if len(lines) < 2 {
-		t.Errorf("expected at least 2 distinct log lines, got %d:\n%s", len(lines), log)
-	}
+	assertLength(t, lines, 2)
+	assertContains(t, lines[0], "work_a ")
+	assertContains(t, lines[1], "work_b ")
 }
 
 func TestProfilerStop(t *testing.T) {
@@ -167,14 +148,4 @@ func TestProfilerLogFormat(t *testing.T) {
 	assertMatches(t, lines[0], regexp.MustCompile("top_call;middle_call;deep_call [234]"))
 	assertMatches(t, lines[1], regexp.MustCompile("TestClass::method;middle_call;deep_call [234]"))
 	assertMatches(t, lines[2], regexp.MustCompile("TestClass::staticMethod;deep_call [234]"))
-}
-
-func filterNonEmpty(ss []string) []string {
-	var result []string
-	for _, s := range ss {
-		if s != "" {
-			result = append(result, s)
-		}
-	}
-	return result
 }

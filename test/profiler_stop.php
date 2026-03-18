@@ -1,18 +1,19 @@
 <?php
 
-$profiler = start_profiler(0.01, 0.02);
-
-// Let it collect some samples
+// waits 50ms in steps of 10ms
 function wait() {
-    usleep(50000); // 100ms
+    for($i = 0; $i < 5; $i++) {
+        usleep(10000);
+    }
 }
-wait();
 
+$profiler = start_profiler(0.01, 0.02);
+wait();
 $profiler->stop();
 
-// After stop, wait and verify no new samples are added
+// wait and verify no new samples are added
 $logBefore = $profiler->getLog();
-usleep(100000); // 100ms
+wait();
 $logAfter = $profiler->getLog();
 
 if ($logBefore === $logAfter) {
