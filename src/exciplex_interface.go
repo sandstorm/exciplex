@@ -14,6 +14,14 @@ func init() {
 	frankenphp.RegisterExtension(unsafe.Pointer(&C.exciplex_module_entry))
 }
 
+//export go_exciplex_cleanup_callback
+func go_exciplex_cleanup_callback(handle C.uintptr_t) {
+	h := cgo.Handle(handle)
+	cb := h.Value().(Callback)
+	cb.Cleanup()
+	h.Delete()
+}
+
 func registerGoObject(obj interface{}) C.uintptr_t {
 	handle := cgo.NewHandle(obj)
 	return C.uintptr_t(handle)

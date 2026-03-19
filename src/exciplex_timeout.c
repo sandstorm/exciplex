@@ -8,8 +8,9 @@
 
 #include "exciplex_timeout.h"
 
-// Exported Go function — calls the Go closure stored in the cgo.Handle.
+// Exported Go functions
 extern void go_exciplex_on_processed(uintptr_t handle);
+extern void go_exciplex_cleanup_callback(uintptr_t handle);
 
 // Per-PHP-thread list of all pending timeout states (for RSHUTDOWN cleanup).
 // Only accessed on the PHP thread — no synchronization needed.
@@ -24,7 +25,7 @@ static __thread exciplex_mpsc_stack triggered = {(exciplex_list_node *)NULL};
 static void (*prev_zend_interrupt_function)(zend_execute_data *) = NULL;
 
 // Interrupt handler — runs on the PHP thread when EG(vm_interrupt) is set.
-// Pops all triggered states and processes each callback.
+// Pops all triggered states and calls Go for each.
 static void exciplex_interrupt_handler(zend_execute_data *execute_data) {
     exciplex_list_node *node = exciplex_mpsc_stack_pop_all(&triggered);
 
@@ -37,33 +38,11 @@ static void exciplex_interrupt_handler(zend_execute_data *execute_data) {
             // Reset status BEFORE calling — goroutine can retrigger after interval.
             // If callback calls die(), RSHUTDOWN will cancel the still-PENDING state.
             atomic_store(&state->status, EXCIPLEX_TIMEOUT_PENDING);
-
-            if (Z_TYPE(state->callback) != IS_UNDEF) {
-                zval retval;
-                ZVAL_UNDEF(&retval);
-                call_user_function(NULL, NULL, &state->callback, &retval, 0, NULL);
-                zval_ptr_dtor(&retval);
-            }
-
-            // Notify the Go goroutine that this tick was processed
-            if (state->on_processed_handle != 0) {
-                go_exciplex_on_processed(state->on_processed_handle);
-            }
+            go_exciplex_on_processed(state->callback_handle);
         } else {
             // One-shot: set CANCELLED so goroutine exits on next trigger attempt.
-            // Don't free state — goroutine will free via defer.
-            // Don't remove from pending — RSHUTDOWN will clean up.
             atomic_store(&state->status, EXCIPLEX_TIMEOUT_CANCELLED);
-
-            zval callback;
-            ZVAL_COPY_VALUE(&callback, &state->callback);
-            ZVAL_UNDEF(&state->callback); // prevent RSHUTDOWN double-dtor
-
-            zval retval;
-            ZVAL_UNDEF(&retval);
-            call_user_function(NULL, NULL, &callback, &retval, 0, NULL);
-            zval_ptr_dtor(&retval);
-            zval_ptr_dtor(&callback);
+            go_exciplex_on_processed(state->callback_handle);
         }
 
         node = next;
@@ -74,22 +53,17 @@ static void exciplex_interrupt_handler(zend_execute_data *execute_data) {
     }
 }
 
-exciplex_timeout_state *exciplex_setup_timeout(zval *callback, bool repeating, uintptr_t on_processed_handle) {
+exciplex_timeout_state *exciplex_setup_timeout(bool repeating, uintptr_t callback_handle) {
     exciplex_timeout_state *state = malloc(sizeof(exciplex_timeout_state));
     if (state == NULL) {
         return NULL;
     }
 
-    if (callback != NULL) {
-        ZVAL_COPY(&state->callback, callback);
-    } else {
-        ZVAL_UNDEF(&state->callback);
-    }
     state->vm_interrupt = &EG(vm_interrupt);
     state->triggered_stack = &triggered;
     atomic_store(&state->status, EXCIPLEX_TIMEOUT_PENDING);
     state->repeating = repeating;
-    state->on_processed_handle = on_processed_handle;
+    state->callback_handle = callback_handle;
 
     exciplex_list_prepend(&pending, state);
 
@@ -97,13 +71,9 @@ exciplex_timeout_state *exciplex_setup_timeout(zval *callback, bool repeating, u
 }
 
 // Called from PHP thread to cancel a timeout (e.g. $timer->stop()).
-// State stays in pending list — RSHUTDOWN will free it.
+// Only sets CANCELLED — RSHUTDOWN handles all resource cleanup.
 void exciplex_cancel_timeout(exciplex_timeout_state *state) {
     atomic_store(&state->status, EXCIPLEX_TIMEOUT_CANCELLED);
-    if (Z_TYPE(state->callback) != IS_UNDEF) {
-        zval_ptr_dtor(&state->callback);
-        ZVAL_UNDEF(&state->callback);
-    }
 }
 
 // Called from a Go goroutine (arbitrary OS thread) after the timer fires.
@@ -147,11 +117,9 @@ char *exciplex_capture_stack_trace(void) {
         ZEND_HASH_FOREACH_VAL(Z_ARRVAL(backtrace), frame) {
             if (Z_TYPE_P(frame) != IS_ARRAY) continue;
 
-            //zval *zfile = zend_hash_str_find(Z_ARRVAL_P(frame), "file", sizeof("file") - 1);
             zval *zfunc = zend_hash_str_find(Z_ARRVAL_P(frame), "function", sizeof("function") - 1);
             zval *zclass = zend_hash_str_find(Z_ARRVAL_P(frame), "class", sizeof("class") - 1);
 
-            //const char *file = (zfile && Z_TYPE_P(zfile) == IS_STRING) ? Z_STRVAL_P(zfile) : "unknown";
             const char *func = (zfunc && Z_TYPE_P(zfunc) == IS_STRING) ? Z_STRVAL_P(zfunc) : "unknown";
             const char *cls = (zclass && Z_TYPE_P(zclass) == IS_STRING) ? Z_STRVAL_P(zclass) : NULL;
 
@@ -159,10 +127,8 @@ char *exciplex_capture_stack_trace(void) {
             char line_buf[2048];
             int len;
             if (cls) {
-                //len = snprintf(line_buf, sizeof(line_buf), "%s;%s::%s", file, cls, func);
                 len = snprintf(line_buf, sizeof(line_buf), "%s::%s", cls, func);
             } else {
-                //len = snprintf(line_buf, sizeof(line_buf), "%s;%s", file, func);
                 len = snprintf(line_buf, sizeof(line_buf), "%s", func);
             }
 
@@ -186,6 +152,15 @@ char *exciplex_capture_stack_trace(void) {
     return buf;
 }
 
+// Thin wrappers around PHP macros for use from Go
+void exciplex_zval_copy(zval *dest, zval *src) {
+    ZVAL_COPY(dest, src);
+}
+
+void exciplex_zval_dtor(zval *zv) {
+    zval_ptr_dtor(zv);
+}
+
 void exciplex_timeout_minit(void) {
     prev_zend_interrupt_function = zend_interrupt_function;
     zend_interrupt_function = exciplex_interrupt_handler;
@@ -202,8 +177,11 @@ void exciplex_timeout_rshutdown(void) {
         // Set CANCELLED — goroutines will see this and stop.
         atomic_store(&state->status, EXCIPLEX_TIMEOUT_CANCELLED);
 
-        // Clean callback if not already cleaned (cancel/one-shot handler set UNDEF).
-        zval_ptr_dtor(&state->callback);
+        // Clean up Go callback handle
+        if (state->callback_handle != 0) {
+            go_exciplex_cleanup_callback(state->callback_handle);
+            state->callback_handle = 0;
+        }
 
         node = node->next;
     }

@@ -13,19 +13,18 @@
 #define EXCIPLEX_TIMEOUT_CANCELLED 2
 
 typedef struct _exciplex_timeout_state {
-    zval callback;
     zend_atomic_bool *vm_interrupt;
     exciplex_mpsc_stack *triggered_stack;
     atomic_int status;
     bool repeating;
-    uintptr_t on_processed_handle;
+    uintptr_t callback_handle;
 } exciplex_timeout_state;
 
 // Called from PHP thread — one-shot or repeating setup
-exciplex_timeout_state *exciplex_setup_timeout(zval *callback, bool repeated, uintptr_t on_processed_handle);
+exciplex_timeout_state *exciplex_setup_timeout(bool repeated, uintptr_t callback_handle);
 
 // Called from PHP thread to cancel a timeout (e.g. $timer->stop()).
-// Removes from pending list and cleans up callback. Caller frees state.
+// Only sets CANCELLED — RSHUTDOWN handles all resource cleanup.
 void exciplex_cancel_timeout(exciplex_timeout_state *state);
 
 // Called from Go goroutine after timer fires.
@@ -35,6 +34,10 @@ int exciplex_trigger_timeout(exciplex_timeout_state *state);
 // Capture the current PHP stack trace as a malloc'd newline-separated string.
 // Caller must free() the result.
 char *exciplex_capture_stack_trace(void);
+
+// Thin wrappers around PHP macros for use from Go
+void exciplex_zval_copy(zval *dest, zval *src);
+void exciplex_zval_dtor(zval *zv);
 
 // Lifecycle hooks
 void exciplex_timeout_minit(void);

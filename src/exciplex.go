@@ -16,8 +16,8 @@ import (
 //export go_exciplex_on_processed
 func go_exciplex_on_processed(handle C.uintptr_t) {
 	h := cgo.Handle(handle)
-	fn := h.Value().(func())
-	fn()
+	cb := h.Value().(Callback)
+	cb.Call()
 }
 
 // export_php:class ExciplexTimer
@@ -26,13 +26,11 @@ type Timer struct {
 	state    *C.exciplex_timeout_state
 }
 
-func startTimer(callback *C.zval, interval, delay float64, repeated bool, onProcessed func()) *Timer {
-	var onProcessedHandle C.uintptr_t
-	if onProcessed != nil {
-		onProcessedHandle = C.uintptr_t(cgo.NewHandle(onProcessed))
-	}
-	state := C.exciplex_setup_timeout(callback, C.bool(repeated), onProcessedHandle)
+func startTimer(interval, delay float64, repeated bool, cb Callback) *Timer {
+	handle := cgo.NewHandle(cb)
+	state := C.exciplex_setup_timeout(C.bool(repeated), C.uintptr_t(handle))
 	if state == nil {
+		cgo.Handle(handle).Delete()
 		return nil
 	}
 
@@ -58,20 +56,20 @@ func startTimer(callback *C.zval, interval, delay float64, repeated bool, onProc
 
 // export_php:function exciplex_set_timeout(callable $callable, float $interval): ExciplexTimer
 func SetTimeout(callback *C.zval, interval float64) *Timer {
-	return startTimer(callback, interval, interval, false, nil)
+	return startTimer(interval, interval, false, NewPHPCallback(callback))
 }
 
 // export_php:function exciplex_set_interval(callable $callable, float $initialDelay, float $interval): ExciplexTimer
 func SetInterval(callback *C.zval, initialDelay, interval float64) *Timer {
-	return startTimer(callback, interval, initialDelay, true, nil)
+	return startTimer(interval, initialDelay, true, NewPHPCallback(callback))
 }
 
 // export_php:method ExciplexTimer::stop(): void
 func (t *Timer) Stop() {
-	// Cancel on PHP thread: sets CANCELLED, removes from pending list, cleans callback
+	// Cancel on PHP thread: sets CANCELLED to stop the goroutine
 	C.exciplex_cancel_timeout(t.state)
 	t.state = nil
-	// Signal goroutine to exit and free state
+	// Signal goroutine to exit
 	t.stopChan <- struct{}{}
 }
 
@@ -92,7 +90,7 @@ func StartProfiler(initialDelay float64, interval float64) *Profiler {
 	p := &Profiler{
 		logIndex: make(map[uint64]*LogEntry),
 	}
-	p.timer = startTimer(nil, interval, initialDelay, true, func() {
+	p.timer = startTimer(interval, initialDelay, true, &GoCallback{fn: func() {
 		cstr := C.exciplex_capture_stack_trace()
 		defer C.free(unsafe.Pointer(cstr))
 		goStr := C.GoString(cstr)
@@ -112,7 +110,7 @@ func StartProfiler(initialDelay float64, interval float64) *Profiler {
 			p.logIndex[key] = entry
 			p.logOrder = append(p.logOrder, entry)
 		}
-	})
+	}})
 	return p
 }
 
