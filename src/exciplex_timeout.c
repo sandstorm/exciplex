@@ -1,6 +1,5 @@
 #include <php.h>
 #include <Zend/zend_execute.h>
-#include <Zend/zend_builtin_functions.h>
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
@@ -103,52 +102,56 @@ int exciplex_trigger_timeout(exciplex_timeout_state *state) {
 }
 
 char *exciplex_capture_stack_trace(void) {
-    zval backtrace;
-    zend_fetch_debug_backtrace(&backtrace, 0, DEBUG_BACKTRACE_IGNORE_ARGS, 0);
-
-    // Build newline-separated string of "function at file:line"
     size_t buf_size = 1024;
     size_t buf_used = 0;
     char *buf = malloc(buf_size);
     buf[0] = '\0';
 
-    if (Z_TYPE(backtrace) == IS_ARRAY) {
-        zval *frame;
-        ZEND_HASH_FOREACH_VAL(Z_ARRVAL(backtrace), frame) {
-            if (Z_TYPE_P(frame) != IS_ARRAY) continue;
+    zend_execute_data *ex = EG(current_execute_data);
+    while (ex) {
+        zend_function *func = ex->func;
+        if (!func || func->type != ZEND_USER_FUNCTION) {
+            ex = ex->prev_execute_data;
+            continue;
+        }
 
-            zval *zfunc = zend_hash_str_find(Z_ARRVAL_P(frame), "function", sizeof("function") - 1);
-            zval *zclass = zend_hash_str_find(Z_ARRVAL_P(frame), "class", sizeof("class") - 1);
+        const char *filename = func->op_array.filename ? ZSTR_VAL(func->op_array.filename) : NULL;
+        const char *funcname = func->common.function_name ? ZSTR_VAL(func->common.function_name) : NULL;
+        const char *classname = (func->common.scope && func->common.scope->name)
+            ? ZSTR_VAL(func->common.scope->name) : NULL;
 
-            const char *func = (zfunc && Z_TYPE_P(zfunc) == IS_STRING) ? Z_STRVAL_P(zfunc) : "unknown";
-            const char *cls = (zclass && Z_TYPE_P(zclass) == IS_STRING) ? Z_STRVAL_P(zclass) : NULL;
+        char line_buf[2048];
+        int len;
+        if (funcname && classname) {
+            len = snprintf(line_buf, sizeof(line_buf), "%s::%s", classname, funcname);
+        } else if (funcname && strcmp(funcname, "{closure}") == 0 && filename) {
+            len = snprintf(line_buf, sizeof(line_buf), "{closure:%s(%u)}", filename, func->op_array.line_start);
+        } else if (funcname) {
+            len = snprintf(line_buf, sizeof(line_buf), "%s", funcname);
+        } else if (filename) {
+            len = snprintf(line_buf, sizeof(line_buf), "%s", filename);
+        } else {
+            ex = ex->prev_execute_data;
+            continue;
+        }
 
-            // Format: "Class::method" or "function"
-            char line_buf[2048];
-            int len;
-            if (cls) {
-                len = snprintf(line_buf, sizeof(line_buf), "%s::%s", cls, func);
-            } else {
-                len = snprintf(line_buf, sizeof(line_buf), "%s", func);
-            }
+        // Need: existing content + separator + new line + null
+        size_t needed = buf_used + (buf_used > 0 ? 1 : 0) + len + 1;
+        if (needed > buf_size) {
+            buf_size = needed * 2;
+            buf = realloc(buf, buf_size);
+        }
 
-            // Need: existing content + separator + new line + null
-            size_t needed = buf_used + (buf_used > 0 ? 1 : 0) + len + 1;
-            if (needed > buf_size) {
-                buf_size = needed * 2;
-                buf = realloc(buf, buf_size);
-            }
+        if (buf_used > 0) {
+            buf[buf_used++] = '\n';
+        }
+        memcpy(buf + buf_used, line_buf, len);
+        buf_used += len;
+        buf[buf_used] = '\0';
 
-            if (buf_used > 0) {
-                buf[buf_used++] = '\n';
-            }
-            memcpy(buf + buf_used, line_buf, len);
-            buf_used += len;
-            buf[buf_used] = '\0';
-        } ZEND_HASH_FOREACH_END();
+        ex = ex->prev_execute_data;
     }
 
-    zval_ptr_dtor(&backtrace);
     return buf;
 }
 

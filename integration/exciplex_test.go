@@ -120,7 +120,7 @@ func TestProfilerNoSamples(t *testing.T) {
 func TestProfilerSingleStack(t *testing.T) {
 	body := httpGet(t, "profiler_single_stack.php")
 
-	assertMatches(t, body, regexp.MustCompile("test 1\n"))
+	assertMatches(t, body, regexp.MustCompile(`/app/Web/profiler_single_stack\.php;test 1\n`))
 }
 
 func TestProfilerMultipleStacks(t *testing.T) {
@@ -130,14 +130,35 @@ func TestProfilerMultipleStacks(t *testing.T) {
 	lines := strings.Split(log, "\n")
 
 	assertLength(t, lines, 2)
-	assertContains(t, lines[0], "work_a ")
-	assertContains(t, lines[1], "work_b ")
+	assertContains(t, lines[0], "/app/Web/profiler_multiple_stacks.php;work_a ")
+	assertContains(t, lines[1], "/app/Web/profiler_multiple_stacks.php;work_b ")
 }
 
 func TestProfilerStop(t *testing.T) {
 	body := httpGet(t, "profiler_stop.php")
+	assertContains(t, body, "/app/Web/profiler_stop.php;wait")
 	assertContains(t, body, "stop_works")
 	assertNotContains(t, body, "FAIL")
+}
+
+func TestProfilerCrossFileFunctionCall(t *testing.T) {
+	body := httpGet(t, "profiler_cross_file_function_call.php")
+
+	assertContains(t, body, "/app/Web/profiler_cross_file_function_call.php;cross_file_work")
+}
+
+func TestProfilerCrossFileNoFunctions(t *testing.T) {
+	body := httpGet(t, "profiler_cross_file_no_functions.php")
+
+	assertContains(t, body, "/app/Web/profiler_cross_file_no_functions.php;/app/Web/profiler_cross_file_no_functions_helper.php")
+}
+
+func TestProfilerClosure(t *testing.T) {
+	body := httpGet(t, "profiler_closure.php")
+
+	assertMatches(t, body, regexp.MustCompile(
+		`/app/Web/profiler_closure\.php;\{closure:/app/Web/profiler_closure\.php\(3\)\} \d+`,
+	))
 }
 
 func TestProfilerLogFormat(t *testing.T) {
@@ -145,7 +166,7 @@ func TestProfilerLogFormat(t *testing.T) {
 
 	lines := strings.Split(strings.Trim(body, "\n"), "\n")
 	assertLength(t, lines, 3)
-	assertMatches(t, lines[0], regexp.MustCompile("top_call;middle_call;deep_call [234]"))
-	assertMatches(t, lines[1], regexp.MustCompile("TestClass::method;middle_call;deep_call [234]"))
-	assertMatches(t, lines[2], regexp.MustCompile("TestClass::staticMethod;deep_call [234]"))
+	assertMatches(t, lines[0], regexp.MustCompile(`/app/Web/profiler_log_format\.php;top_call;middle_call;deep_call [234]`))
+	assertMatches(t, lines[1], regexp.MustCompile(`/app/Web/profiler_log_format\.php;TestClass::method;middle_call;deep_call [234]`))
+	assertMatches(t, lines[2], regexp.MustCompile(`/app/Web/profiler_log_format\.php;TestClass::staticMethod;deep_call [234]`))
 }

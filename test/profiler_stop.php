@@ -16,6 +16,7 @@ $logBefore = $profiler->getLog();
 wait();
 $logAfter = $profiler->getLog();
 
+echo $logBefore;
 if ($logBefore === $logAfter) {
     echo "stop_works";
 } else {

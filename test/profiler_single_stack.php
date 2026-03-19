@@ -7,7 +7,7 @@ function test() {
     }
 }
 
-$profiler = start_profiler(0.01, 0.5);
+$profiler = start_profiler(0.005, 0.013);
 test();
 $profiler->stop();
 
