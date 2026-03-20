@@ -52,13 +52,47 @@ $timer->stop();
 
 ## Installation
 
-> exciplex is not yet published as a standalone package. Installation instructions will be added once a release mechanism is in place.
+exciplex is installed by building a custom FrankenPHP Docker image with xcaddy, as described in the FrankenPHP documentation on how to [add Caddy modules to FrankenPHP](https://frankenphp.dev/docs/docker/#how-to-install-more-caddy-modules). Two changes are required compared to the standard setup:
+
+- `-D_GNU_SOURCE` in `CGO_CFLAGS` — exciplex's C extension imports PHP headers requiring GNU-specific declarations which require this flag to compile correctly.
+- **`--with github.com/sandstorm/exciplex`** — adds the exciplex module to the FrankenPHP binary.
+
+In the example we also pin the xcaddy binary version — we pass the same version tag to `xcaddy build` and copy the matching xcaddy binary from `caddy:<version>-builder`, as mismatched versions caused build failures for us in the past.
+
+### Example Dockerfile
+```
+FROM dunglas/frankenphp:1.12.1-builder-php8.3-trixie AS builder
+
+# Copy xcaddy in the builder image
+COPY --from=caddy:2.10.2-builder /usr/bin/xcaddy /usr/bin/xcaddy
+
+# CGO must be enabled to build FrankenPHP
+# MODIFICATION: we added build module caching (--mount=...) here, + GOMODCACHE + GOCACHE declarations
+RUN CGO_ENABLED=1 \
+    XCADDY_SETCAP=1 \
+    XCADDY_GO_BUILD_FLAGS="-ldflags='-w -s' -tags=nobadger,nomysql,nopgx" \
+    CGO_CFLAGS="-D_GNU_SOURCE $(php-config --includes)" \
+    CGO_LDFLAGS="$(php-config --ldflags) $(php-config --libs)" \
+    GOMODCACHE=/go/pkg/mod \
+    GOCACHE=/root/.cache/go-build \
+    xcaddy build v2.10.2 \
+    --output /usr/local/bin/frankenphp \
+    --with github.com/dunglas/frankenphp=./ \
+    --with github.com/dunglas/frankenphp/caddy=./caddy/ \
+    --with github.com/dunglas/caddy-cbrotli \
+    --with github.com/sandstorm/exciplex
+    
+FROM dunglas/frankenphp:1.12.1-php8.3-trixie AS php-base
+
+# Replace the official binary by the one contained your custom modules
+COPY --from=builder /usr/local/bin/frankenphp /usr/local/bin/frankenphp
+```
 
 ## How it works
 
 ### Interrupt mechanism
 
-PHP's virtual machine checks an interrupt flag (`EG(vm_interrupt)`) between opcode dispatches. When the flag is set, the VM calls a registered interrupt handler before continuing — allowing code to run safely on the PHP thread at a predictable point. exciplex uses this mechanism to deliver timer callbacks and capture stack traces. The idea comes directly from Excimer.
+PHP's virtual machine checks an interrupt flag (`EG(vm_interrupt)`) between opcode dispatches. When the flag is set, the VM calls a registered interrupt handler before continuing — allowing code to run safely on the PHP thread at a predictable point. exciplex uses this mechanism to deliver timer callbacks and capture stack traces. The idea comes directly from Excimer — see [Profiling PHP in production at scale](https://techblog.wikimedia.org/2021/03/03/profiling-php-in-production-at-scale/) for background on the approach.
 
 ### Architecture
 
