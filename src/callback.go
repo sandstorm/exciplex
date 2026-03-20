@@ -1,4 +1,4 @@
-package exciplex
+package src
 
 // #include "exciplex_timeout.h"
 import "C"
@@ -18,8 +18,12 @@ type CancellableCallback struct {
 	cancelled bool // PHP-thread only — no sync needed
 }
 
-func (cc *CancellableCallback) Cancel()  { cc.cancelled = true }
-func (cc *CancellableCallback) Call()    { if !cc.cancelled { cc.inner.Call() } }
+func (cc *CancellableCallback) Cancel() { cc.cancelled = true }
+func (cc *CancellableCallback) Call() {
+	if !cc.cancelled {
+		cc.inner.Call()
+	}
+}
 func (cc *CancellableCallback) Cleanup() { cc.inner.Cleanup() }
 
 type GoCallback struct {

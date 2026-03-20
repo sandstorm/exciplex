@@ -1,4 +1,4 @@
-module exciplex
+module github.com/sandstorm/exciplex
 
 go 1.26.1
 

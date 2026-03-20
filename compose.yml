@@ -1,9 +1,0 @@
-services:
-  test:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    volumes:
-      - ./test:/app/Web:ro
-    ports:
-      - 18181:8081

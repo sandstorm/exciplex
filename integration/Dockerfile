@@ -5,7 +5,7 @@ COPY --from=caddy:2.10.2-builder /usr/bin/xcaddy /usr/bin/xcaddy
 
 # CGO must be enabled to build FrankenPHP
 # MODIFICATION: we added build module caching (--mount=...) here, + GOMODCACHE + GOCACHE declarations
-RUN --mount=type=bind,source=./src,target=./exciplex \
+RUN --mount=type=bind,source=./,target=./exciplex \
     --mount=type=cache,target=/go/pkg/mod,sharing=locked \
     --mount=type=cache,target=/root/.cache/go-build,sharing=locked \
     CGO_ENABLED=1 \

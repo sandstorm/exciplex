@@ -1,4 +1,4 @@
-package exciplex
+package src
 
 // #include <stdlib.h>
 // #include "exciplex.h"
