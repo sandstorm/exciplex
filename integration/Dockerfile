@@ -24,10 +24,6 @@ RUN --mount=type=bind,source=./,target=./exciplex \
 
 FROM dunglas/frankenphp:1.12.1-php8.3-trixie AS php-base
 
-# reference: https://github.com/mlocati/docker-php-extension-installer
-RUN install-php-extensions \
-    excimer
-
 # Replace the official binary by the one contained your custom modules
 COPY --from=builder /usr/local/bin/frankenphp /usr/local/bin/frankenphp
 
