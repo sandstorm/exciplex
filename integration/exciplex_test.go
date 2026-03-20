@@ -106,6 +106,17 @@ func TestStopIntervalAfterOneCall(t *testing.T) {
 	assertEndsWith(t, body, "done")
 }
 
+func TestStopCancelsQueuedCallbacks(t *testing.T) {
+	body := httpGet(t, "stop_cancels_queued_callbacks.php")
+	assertEndsWith(t, body, "done")
+	// "callback" must appear exactly once — the CancellableCallback guard must
+	// suppress any already-queued invocations after stop() was called.
+	count := strings.Count(body, "callback")
+	if count != 1 {
+		t.Errorf("expected \"callback\" to appear exactly once, got %d times in:\n%s", count, body)
+	}
+}
+
 // --- Profiler tests ---
 
 func TestProfilerNoSamples(t *testing.T) {

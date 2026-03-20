@@ -13,6 +13,15 @@ type Callback interface {
 	Cleanup()
 }
 
+type CancellableCallback struct {
+	inner     Callback
+	cancelled bool // PHP-thread only — no sync needed
+}
+
+func (cc *CancellableCallback) Cancel()  { cc.cancelled = true }
+func (cc *CancellableCallback) Call()    { if !cc.cancelled { cc.inner.Call() } }
+func (cc *CancellableCallback) Cleanup() { cc.inner.Cleanup() }
+
 type GoCallback struct {
 	fn func()
 }

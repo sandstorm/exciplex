@@ -22,12 +22,14 @@ func go_exciplex_on_processed(handle C.uintptr_t) {
 
 // export_php:class ExciplexTimer
 type Timer struct {
-	stopChan chan interface{}
-	state    *C.exciplex_timeout_state
+	stopChan    chan interface{}
+	state       *C.exciplex_timeout_state
+	cancellable *CancellableCallback
 }
 
 func startTimer(interval, delay float64, repeated bool, cb Callback) *Timer {
-	handle := cgo.NewHandle(cb)
+	cancellable := &CancellableCallback{inner: cb}
+	handle := cgo.NewHandle(cancellable)
 	state := C.exciplex_setup_timeout(C.bool(repeated), C.uintptr_t(handle))
 	if state == nil {
 		cgo.Handle(handle).Delete()
@@ -35,8 +37,9 @@ func startTimer(interval, delay float64, repeated bool, cb Callback) *Timer {
 	}
 
 	timeout := &Timer{
-		stopChan: make(chan interface{}, 1),
-		state:    state,
+		stopChan:    make(chan interface{}, 1),
+		state:       state,
+		cancellable: cancellable,
 	}
 
 	go func() {
@@ -69,6 +72,8 @@ func (t *Timer) Stop() {
 	// Cancel on PHP thread: sets CANCELLED to stop the goroutine
 	C.exciplex_cancel_timeout(t.state)
 	t.state = nil
+	// Prevent any already-queued callback from firing
+	t.cancellable.Cancel()
 	// Signal goroutine to exit
 	t.stopChan <- struct{}{}
 }
